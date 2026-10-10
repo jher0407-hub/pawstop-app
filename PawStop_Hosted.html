@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>PawStop - Pet Supplies</title>
+<style>
+:root { box-sizing: border-box; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+body {
+  font-size: 1em;
+  font-family: Arial;
+  background: lightblue;
+  margin: 0;
+  padding: 0 20px 40px 20px;
+}
+
+#header {
+  text-align: center;
+  padding: 10px 0;
+}
+
+#header h1 {
+  margin: 5px 0 0 0;
+}
+
+#header p {
+  margin: 0 0 8px 0;
+}
+
+#cartbar {
+  font-weight: bold;
+}
+
+#message {
+  font-weight: bold;
+  min-height: 1.5em;
+  margin: 10px 0;
+}
+
+.error {
+  color: darkred;
+}
+
+.success {
+  color: darkgreen;
+}
+
+#searchform {
+  background: white;
+  padding: 10px;
+  border-radius: 6px;
+  margin-bottom: 15px;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  background: white;
+}
+
+th, td {
+  border: 1px solid #999;
+  padding: 6px 8px;
+  text-align: left;
+}
+
+th {
+  background: steelblue;
+  color: white;
+}
+
+.soldout {
+  color: gray;
+}
+
+#details {
+  background: white;
+  border-radius: 6px;
+  padding: 10px 15px;
+  margin-top: 15px;
+}
+
+#details:empty {
+  display: none;
+}
+
+.lowstock {
+  color: darkorange;
+  font-weight: bold;
+}
+
+.outofstock {
+  color: darkred;
+  font-weight: bold;
+}
+
+/* --- Added for Feature 4 (Review cart) --- */
+
+#tabs {
+  text-align: center;
+  margin-bottom: 12px;
+}
+
+.tabbutton {
+  padding: 8px 16px;
+  margin: 0 4px;
+  border: 1px solid #2E5E8C;
+  background: white;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.tabbutton.active {
+  background: steelblue;
+  color: white;
+}
+
+.page {
+  background: white;
+  border-radius: 6px;
+  padding: 10px 15px;
+}
+
+.qtybox {
+  width: 50px;
+}
+
+.removebutton, .cartupdatebutton {
+  margin-left: 6px;
+}
+
+#cartsummary {
+  text-align: right;
+  font-size: 1.1em;
+  margin-top: 10px;
+}
+
+</style>
+</head>
+<body>
+
+<div id="header">
+    <h1>PawStop</h1>
+    <p>Everything for dogs and cats</p>
+    <div id="cartbar">
+        Cart: <span id="cartcount">0</span> item(s)
+        <button type="button" id="savecartbutton">Save cart as CSV</button>
+    </div>
+</div>
+
+<div id="tabs">
+    <button type="button" class="tabbutton active" id="tab-shop">Shop</button>
+    <button type="button" class="tabbutton" id="tab-cart">My Cart</button>
+</div>
+
+<div id="message"></div>
+
+<div id="loadarea" style="display: none;">
+    <p>I could not load the product data automatically. Please choose the products.csv file here:</p>
+    <input type="file" id="csvfile" accept=".csv" />
+</div>
+
+<div id="page-shop" class="page">
+    <form onsubmit="return false;" id="searchform">
+        Search: <input type="text" size="25" id="searchbox" placeholder="Try: chicken, plush, brush" />
+        Pet:
+        <select id="pettype"><option value="">Any</option></select>
+        Category:
+        <select id="category"><option value="">Any</option></select>
+        <button type="button" id="searchbutton">Search</button>
+        <button type="button" id="clearbutton">Show all</button>
+    </form>
+
+    <div id="results"></div>
+    <div id="details"></div>
+</div>
+
+<div id="page-cart" class="page" style="display: none;">
+    <h2>My Cart</h2>
+    <div id="cartarea"></div>
+</div>
+
+<script>
+/*
+  PawStop - Online Pet Supply Store (MVP)
+
+  The three features from my user stories:
+    1. Search and browse products
+    2. Add a product to the cart (opened from its product details)
+    3. Review the cart (change quantity, remove items, see the total)
+
+  Data:
+    products.csv - the store's product catalog (read by the page)
+    cart         - saved in the browser (localStorage) and can also
+                   be downloaded as cart.csv with the "Save cart as CSV" button
+*/
+
+var LOW_STOCK_LIMIT = 5;   // show a low stock warning at or below this number
+var MAX_PER_ORDER = 10;    // keep quantities reasonable for an MVP
+var CART_KEY = "pawstopCart";
+
+var products = [];   // list of product objects loaded from products.csv
+var cart = {};       // like {"P001": 2, "P005": 1}
+
+
+/* ------------------------------------------------------------------
+   Small helper functions
+   ------------------------------------------------------------------ */
+
+// Show a message at the top of the page. type is "error" or "success".
+function showMessage(text, type) {
+    var box = document.getElementById("message");
+    box.className = type || "";
+    box.textContent = text;
+}
+
+// Make text safe to put inside HTML.
+function escapeHtml(text) {
+    return String(text)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+}
+
+function money(number) {
+    return "$" + number.toFixed(2);
+}
+
+function findProduct(productId) {
+    for (var i = 0; i < products.length; i++) {
+        if (products[i].product_id === productId) {
+            return products[i];
+        }
+    }
+    return null;
+}
+
+function cartItemCount() {
+    var total = 0;
+    for (var id in cart) {
+        total += cart[id];
+    }
+    return total;
+}
+
+function updateCartCount() {
+    document.getElementById("cartcount").textContent = cartItemCount();
+}
+
+// Returns an HTML snippet describing how many are left.
+function stockLabel(product) {
+    if (product.stock === 0) {
+        return '<span class="outofstock">Out of stock</span>';
+    }
+    if (product.stock <= LOW_STOCK_LIMIT) {
+        return '<span class="lowstock">Low stock - only ' + product.stock + ' left</span>';
+    }
+    return "In stock";
+}
+
+
+/* ------------------------------------------------------------------
+   Tabs: switching between Shop and My Cart
+   ------------------------------------------------------------------ */
+
+function showTab(tabName) {
+    var pages = { shop: "page-shop", cart: "page-cart" };
+    for (var key in pages) {
+        document.getElementById(pages[key]).style.display = (key === tabName) ? "block" : "none";
+        document.getElementById("tab-" + key).className = "tabbutton" + (key === tabName ? " active" : "");
+    }
+    showMessage("", "");
+    if (tabName === "cart") {
+        renderCart();
+    }
+}
+
+
+/* ------------------------------------------------------------------
+   Reading the CSV file
+   ------------------------------------------------------------------ */
+
+// Turns CSV text into a list of rows, where each row is a list of values.
+// It understands quotes, so a value like "Dog food, 15 lb" stays in one piece.
+function parseCSV(text) {
+    var rows = [];
+    var row = [];
+    var value = "";
+    var inQuotes = false;
+
+    for (var i = 0; i < text.length; i++) {
+        var ch = text[i];
+        if (inQuotes) {
+            if (ch === '"' && text[i + 1] === '"') {
+                value += '"';
+                i++;
+            } else if (ch === '"') {
+                inQuotes = false;
+            } else {
+                value += ch;
+            }
+        } else if (ch === '"') {
+            inQuotes = true;
+        } else if (ch === ",") {
+            row.push(value);
+            value = "";
+        } else if (ch === "\n" || ch === "\r") {
+            if (ch === "\r" && text[i + 1] === "\n") {
+                i++;
+            }
+            row.push(value);
+            value = "";
+            if (row.length > 1 || row[0] !== "") {
+                rows.push(row);
+            }
+            row = [];
+        } else {
+            value += ch;
+        }
+    }
+    if (value !== "" || row.length > 0) {
+        row.push(value);
+        rows.push(row);
+    }
+    return rows;
+}
+
+// Turns CSV text into product objects. CSV holds everything as text,
+// so price and stock are changed into real numbers here.
+function setProductsFromCSV(text) {
+    var rows = parseCSV(text);
+    if (rows.length < 2) {
+        showMessage("products.csv is empty.", "error");
+        return;
+    }
+
+    var headers = rows[0].map(function (h) { return h.trim(); });
+    var loaded = [];
+    for (var r = 1; r < rows.length; r++) {
+        var product = {};
+        for (var c = 0; c < headers.length; c++) {
+            product[headers[c]] = (rows[r][c] || "").trim();
+        }
+        product.price = parseFloat(product.price);
+        product.stock = parseInt(product.stock, 10);
+        if (!product.product_id || isNaN(product.price) || isNaN(product.stock)) {
+            showMessage("products.csv has a bad row (line " + (r + 1) + "). Please check it.", "error");
+            return;
+        }
+        loaded.push(product);
+    }
+
+    products = loaded;
+    document.getElementById("loadarea").style.display = "none";
+    showMessage("", "");
+    fillFilters();
+    showResults(products);
+}
+
+// This hosted copy embeds products.csv directly in the page (as EMBEDDED_PRODUCTS_CSV)
+// instead of fetching it, so it works as a single shareable link with no server needed.
+var EMBEDDED_PRODUCTS_CSV = "product_id,name,category,pet_type,brand,price,stock,description\r\nP001,Grain-Free Adult Dog Food 15 lb,Food,Dog,TailWag Naturals,42.99,25,Chicken and sweet potato recipe for adult dogs of all sizes.\r\nP002,Small Breed Puppy Food 5 lb,Food,Dog,TailWag Naturals,19.99,30,Small kibble sized for puppies under 20 lbs.\r\nP003,Indoor Adult Cat Food 10 lb,Food,Cat,WhiskerWell,29.99,40,Salmon and brown rice formula that helps with hairballs.\r\nP004,Senior Cat Wet Food 12-Pack,Food,Cat,WhiskerWell,17.49,3,Soft pate cans made for cats over 10 years old.\r\nP005,Rope Tug Toy,Toys,Dog,ChewCraft,8.99,60,Cotton rope toy for tug-of-war and chewing.\r\nP006,Squeaky Plush Duck,Toys,Dog,ChewCraft,6.49,50,Soft plush duck with a squeaker inside.\r\nP007,Feather Wand Teaser,Toys,Cat,PounceCo,7.99,45,Wand with feathers and bells for interactive play.\r\nP008,Crinkle Ball 6-Pack,Toys,Cat,PounceCo,5.99,80,Lightweight crinkle balls that cats love to bat around.\r\nP009,Adjustable Nylon Dog Collar (Medium),Leashes & Collars,Dog,StrideSafe,12.99,35,Reflective collar that fits necks 13 to 18 inches.\r\nP010,6 ft Padded Dog Leash,Leashes & Collars,Dog,StrideSafe,14.99,28,Comfort grip handle with a strong steel clip.\r\nP011,Breakaway Cat Collar with Bell,Leashes & Collars,Cat,PounceCo,4.99,70,Safety collar that releases if it gets snagged.\r\nP012,Retractable Dog Leash 16 ft,Leashes & Collars,Dog,StrideSafe,19.99,0,One-button lock leash for dogs up to 50 lbs.\r\nP013,Oatmeal Dog Shampoo 16 oz,Grooming,Dog,PawSpa,10.99,33,Gentle formula for dry or itchy skin.\r\nP014,Slicker Brush,Grooming,Dog,PawSpa,11.49,22,Removes tangles and loose fur from medium to long coats.\r\nP015,Cat Nail Clippers,Grooming,Cat,PawSpa,8.49,38,Small clippers with a safety guard.\r\nP016,Deshedding Glove,Grooming,Cat,PawSpa,9.99,26,Rubber-tipped glove that collects loose fur while petting.\r\nP017,Orthopedic Dog Bed Large,Beds,Dog,SnoozePaws,54.99,12,Memory foam bed with a washable cover.\r\nP018,Round Plush Dog Bed Small,Beds,Dog,SnoozePaws,24.99,18,Raised edges for dogs who like to curl up.\r\nP019,Cozy Cat Cave Bed,Beds,Cat,SnoozePaws,22.99,15,Felt cave with a soft removable cushion.\r\nP020,Window Perch Cat Bed,Beds,Cat,SnoozePaws,26.49,9,Attaches to a window with strong suction cups.\r\n";
+
+function loadProducts() {
+    setProductsFromCSV(EMBEDDED_PRODUCTS_CSV);
+}
+
+function readChosenFile() {
+    var file = document.getElementById("csvfile").files[0];
+    if (!file) {
+        return;
+    }
+    var reader = new FileReader();
+    reader.onload = function () {
+        setProductsFromCSV(reader.result);
+    };
+    reader.readAsText(file);
+}
+
+
+/* ------------------------------------------------------------------
+   Saving the cart
+   ------------------------------------------------------------------ */
+
+function loadCart() {
+    try {
+        var saved = localStorage.getItem(CART_KEY);
+        cart = saved ? JSON.parse(saved) : {};
+    } catch (error) {
+        cart = {};   // damaged or blocked storage: start with an empty cart
+    }
+    updateCartCount();
+}
+
+function saveCart() {
+    try {
+        localStorage.setItem(CART_KEY, JSON.stringify(cart));
+    } catch (error) {
+        showMessage("I could not save your cart in this browser.", "error");
+    }
+    updateCartCount();
+}
+
+// A web page cannot write straight to a file on the computer, so this
+// builds cart.csv and lets the shopper download it.
+function downloadCartCSV() {
+    if (cartItemCount() === 0) {
+        showMessage("Your cart is empty, so there is nothing to save yet.", "error");
+        return;
+    }
+    var lines = ["product_id,quantity"];
+    for (var id in cart) {
+        lines.push(id + "," + cart[id]);
+    }
+    var blob = new Blob([lines.join("\n") + "\n"], { type: "text/csv" });
+    var link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "cart.csv";
+    link.click();
+    URL.revokeObjectURL(link.href);
+    showMessage("cart.csv was downloaded.", "success");
+}
+
+
+/* ------------------------------------------------------------------
+   FEATURE 1: Search and browse
+   ------------------------------------------------------------------ */
+
+// Fill the Pet and Category drop-down lists using the values in the data.
+function fillFilters() {
+    fillSelect("pettype", "pet_type");
+    fillSelect("category", "category");
+}
+
+function fillSelect(selectId, field) {
+    var select = document.getElementById(selectId);
+    select.innerHTML = '<option value="">Any</option>';
+    var seen = [];
+    products.forEach(function (p) {
+        if (seen.indexOf(p[field]) === -1) {
+            seen.push(p[field]);
+        }
+    });
+    seen.sort().forEach(function (value) {
+        var option = document.createElement("option");
+        option.value = value;
+        option.textContent = value;
+        select.appendChild(option);
+    });
+}
+
+function searchProducts() {
+    var keyword = document.getElementById("searchbox").value.trim().toLowerCase();
+    var pet = document.getElementById("pettype").value;
+    var category = document.getElementById("category").value;
+
+    var matches = products.filter(function (p) {
+        // The keyword can match the name, brand, category, or description.
+        var searchable = (p.name + " " + p.brand + " " + p.category + " " + p.description).toLowerCase();
+        if (keyword && searchable.indexOf(keyword) === -1) { return false; }
+        if (pet && p.pet_type !== pet) { return false; }
+        if (category && p.category !== category) { return false; }
+        return true;
+    });
+
+    showResults(matches);
+}
+
+function clearSearch() {
+    document.getElementById("searchbox").value = "";
+    document.getElementById("pettype").value = "";
+    document.getElementById("category").value = "";
+    document.getElementById("details").innerHTML = "";
+    showResults(products);
+}
+
+function showResults(list) {
+    var box = document.getElementById("results");
+    if (list.length === 0) {
+        box.innerHTML = "<p>No products matched. Try different words or filters.</p>";
+        return;
+    }
+
+    var html = "<table><tr><th>ID</th><th>Name</th><th>Category</th><th>Pet</th>" +
+               "<th>Price</th><th>Availability</th><th></th></tr>";
+    list.forEach(function (p) {
+        html += "<tr" + (p.stock === 0 ? ' class="soldout"' : "") + ">" +
+                "<td>" + escapeHtml(p.product_id) + "</td>" +
+                "<td>" + escapeHtml(p.name) + "</td>" +
+                "<td>" + escapeHtml(p.category) + "</td>" +
+                "<td>" + escapeHtml(p.pet_type) + "</td>" +
+                "<td>" + money(p.price) + "</td>" +
+                "<td>" + stockLabel(p) + "</td>" +
+                '<td><button type="button" data-id="' + escapeHtml(p.product_id) + '">View details</button></td>' +
+                "</tr>";
+    });
+    html += "</table><p>" + list.length + " product(s) shown.</p>";
+    box.innerHTML = html;
+}
+
+
+/* ------------------------------------------------------------------
+   Product details (opened from search results so a quantity and an
+   Add to cart button can be shown for FEATURE 2)
+   ------------------------------------------------------------------ */
+
+function showDetails(productId) {
+    var p = findProduct(productId);
+    var box = document.getElementById("details");
+    if (!p) {
+        showMessage("Sorry, I could not find that product.", "error");
+        return;
+    }
+    showMessage("", "");
+
+    var html = "<h2>" + escapeHtml(p.name) + "</h2>" +
+        "<p><b>Product ID:</b> " + escapeHtml(p.product_id) + "<br />" +
+        "<b>Brand:</b> " + escapeHtml(p.brand) + "<br />" +
+        "<b>Category:</b> " + escapeHtml(p.category) + "<br />" +
+        "<b>Made for:</b> " + escapeHtml(p.pet_type) + "s<br />" +
+        "<b>Price:</b> " + money(p.price) + "<br />" +
+        "<b>Availability:</b> " + stockLabel(p) + "</p>" +
+        "<p>" + escapeHtml(p.description) + "</p>";
+
+    if (p.stock === 0) {
+        html += "<p>This item cannot be added to the cart right now.</p>";
+    } else {
+        // FEATURE 2 starts here: quantity box and Add to cart button
+        html += 'Quantity: <input type="number" id="quantity" value="1" min="1" max="' + MAX_PER_ORDER + '" style="width: 60px;" /> ' +
+                '<button type="button" id="addbutton" data-id="' + escapeHtml(p.product_id) + '">Add to cart</button>';
+    }
+    box.innerHTML = html;
+    box.scrollIntoView({ behavior: "smooth" });
+}
+
+
+/* ------------------------------------------------------------------
+   FEATURE 2: Add to cart
+   ------------------------------------------------------------------ */
+
+function addToCart(productId) {
+    var p = findProduct(productId);
+    if (!p) {
+        showMessage("Sorry, I could not find that product.", "error");
+        return;
+    }
+
+    var raw = document.getElementById("quantity").value.trim();
+    var quantity = Number(raw);
+    if (raw === "" || !Number.isInteger(quantity) || quantity < 1) {
+        showMessage("Please enter a whole number of 1 or more. Nothing was added.", "error");
+        return;
+    }
+
+    // Count what is already in the cart so the total never passes the limits.
+    var alreadyInCart = cart[productId] || 0;
+    var canStillAdd = Math.min(p.stock - alreadyInCart, MAX_PER_ORDER - alreadyInCart);
+
+    if (canStillAdd <= 0) {
+        showMessage("You already have the most allowed of " + p.name + " in your cart.", "error");
+        return;
+    }
+    if (quantity > canStillAdd) {
+        showMessage("You can only add " + canStillAdd + " more of " + p.name + ". Nothing was added.", "error");
+        return;
+    }
+
+    cart[productId] = alreadyInCart + quantity;
+    saveCart();
+    showMessage("Added " + quantity + " x " + p.name + " (" + money(p.price * quantity) + ") to your cart.", "success");
+}
+
+
+/* ------------------------------------------------------------------
+   FEATURE 3: Review cart
+   ------------------------------------------------------------------ */
+
+function renderCart() {
+    var box = document.getElementById("cartarea");
+    var ids = Object.keys(cart);
+
+    if (ids.length === 0) {
+        box.innerHTML = "<p>Your cart is empty. Visit the Shop tab to add something.</p>";
+        return;
+    }
+
+    var html = "<table><tr><th>Name</th><th>Price</th><th>Quantity</th><th>Line total</th><th></th></tr>";
+    var total = 0;
+    var somethingMissing = false;
+
+    ids.forEach(function (id) {
+        var p = findProduct(id);
+        if (!p) {
+            somethingMissing = true;   // product was removed from the catalog since it was added
+            return;
+        }
+        var quantity = cart[id];
+        var lineTotal = p.price * quantity;
+        total += lineTotal;
+        html += "<tr>" +
+                "<td>" + escapeHtml(p.name) + "</td>" +
+                "<td>" + money(p.price) + "</td>" +
+                '<td><input type="number" class="qtybox" data-id="' + escapeHtml(id) + '" value="' + quantity +
+                    '" min="1" max="' + Math.min(p.stock, MAX_PER_ORDER) + '" />' +
+                    '<button type="button" class="cartupdatebutton" data-id="' + escapeHtml(id) + '">Update</button></td>' +
+                "<td>" + money(lineTotal) + "</td>" +
+                '<td><button type="button" class="removebutton" data-id="' + escapeHtml(id) + '">Remove</button></td>' +
+                "</tr>";
+    });
+
+    html += "</table>";
+    if (somethingMissing) {
+        html += "<p>One or more items in your cart are no longer sold and were left out of the total.</p>";
+    }
+    html += '<div id="cartsummary">Total: ' + money(total) + "</div>";
+    html += '<button type="button" id="clearcartbutton">Clear cart</button>';
+    box.innerHTML = html;
+}
+
+function updateCartQuantity(productId, rawValue) {
+    var p = findProduct(productId);
+    if (!p) {
+        return;
+    }
+    var quantity = Number(rawValue);
+    var limit = Math.min(p.stock, MAX_PER_ORDER);
+
+    if (rawValue.trim() === "" || !Number.isInteger(quantity) || quantity < 1) {
+        showMessage("Please enter a whole number of 1 or more for " + p.name + ".", "error");
+        renderCart();
+        return;
+    }
+    if (quantity > limit) {
+        showMessage("The most you can have of " + p.name + " is " + limit + ".", "error");
+        renderCart();
+        return;
+    }
+
+    cart[productId] = quantity;
+    saveCart();
+    showMessage("Updated " + p.name + " to " + quantity + ".", "success");
+    renderCart();
+}
+
+function removeFromCart(productId) {
+    var p = findProduct(productId);
+    delete cart[productId];
+    saveCart();
+    showMessage((p ? p.name : "Item") + " was removed from your cart.", "success");
+    renderCart();
+}
+
+function clearCart() {
+    cart = {};
+    saveCart();
+    showMessage("Your cart was cleared.", "success");
+    renderCart();
+}
+
+
+/* ------------------------------------------------------------------
+   Connecting the buttons (same idea as the sample's onclick lines)
+   ------------------------------------------------------------------ */
+
+document.getElementById("tab-shop").onclick = function () { showTab("shop"); };
+document.getElementById("tab-cart").onclick = function () { showTab("cart"); };
+
+document.getElementById("searchbutton").onclick = searchProducts;
+document.getElementById("clearbutton").onclick = clearSearch;
+document.getElementById("savecartbutton").onclick = downloadCartCSV;
+document.getElementById("csvfile").onchange = readChosenFile;
+
+// Pressing Enter in the search box works like clicking Search.
+document.getElementById("searchbox").addEventListener("keydown", function (event) {
+    if (event.key === "Enter") {
+        searchProducts();
+    }
+});
+
+// One listener for every "View details" button in the results table.
+document.getElementById("results").onclick = function (event) {
+    var id = event.target.getAttribute("data-id");
+    if (id) {
+        showDetails(id);
+    }
+};
+
+// One listener for the Add to cart button in the details area.
+document.getElementById("details").onclick = function (event) {
+    if (event.target.id === "addbutton") {
+        addToCart(event.target.getAttribute("data-id"));
+    }
+};
+
+// FEATURE 3 buttons: update quantity, remove item, clear the whole cart.
+document.getElementById("cartarea").onclick = function (event) {
+    var id = event.target.getAttribute("data-id");
+    if (event.target.className.indexOf("cartupdatebutton") !== -1) {
+        var input = document.querySelector('.qtybox[data-id="' + id + '"]');
+        updateCartQuantity(id, input.value);
+    } else if (event.target.className.indexOf("removebutton") !== -1) {
+        removeFromCart(id);
+    } else if (event.target.id === "clearcartbutton") {
+        clearCart();
+    }
+};
+
+loadCart();
+loadProducts();
+
+</script>
+</body>
+</html>
